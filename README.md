@@ -75,6 +75,10 @@ Kernel flashing is a manual, device-specific step. The installer's `check`
 step tells you exactly which symbols are missing and refuses to proceed on a
 fatal gap.
 
+Device-specific walls (Samsung DEFEX LSM, forced-fsck reboots, watchdog
+panics, flashing quirks, CSC popups) are documented per device in
+[docs/fold3-sm-f926b.md](docs/fold3-sm-f926b.md).
+
 ## Display
 
 Two paths, measured:
