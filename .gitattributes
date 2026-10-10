@@ -1,0 +1,10 @@
+# Shell must stay LF: install.sh runs under Termux/bash on Android.
+*.sh text eol=lf
+*.md text eol=lf
+# Vendored artifacts must never be line-ending converted.
+vendor/gum/*.tar.gz binary
+vendor/gum/checksums.txt text eol=lf
+vendor/gum/checksums.txt.sigstore.json text eol=lf
+vendor/gum/SHA256SUMS text eol=lf
+vendor/gum/VERSION text eol=lf
+vendor/gum/LICENSE text eol=lf

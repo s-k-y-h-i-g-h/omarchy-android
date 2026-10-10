@@ -28,6 +28,69 @@ die(){ printf '\n%sError: %s%s\n' "$RED" "$1" "$RST" >&2; exit 1; }
 
 run(){ if (( DRY )); then printf '    %s[plan]%s %s\n' "$YLW" "$RST" "${*@Q}"; else "$@"; fi; }
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OA_BIN="${OA_BIN:-$PREFIX/bin}"
+GUM=""            # resolved gum binary; empty => plain-ANSI fallback
+NO_GUM=0
+
+# Charm's gum (MIT, https://github.com/charmbracelet/gum) is the installer's
+# UI layer — the same tool upstream Omarchy uses in its first-boot form.
+# There is no Gradle/JVM dependency here: this repo is shell, gum is a static
+# Go binary. Availability order:
+#   1. system gum  — Termux `pkg install gum`, Arch Linux ARM `pacman -S gum`
+#                    (both ship 2.0.2, source-built for aarch64)
+#   2. vendor/gum/ — pinned tarball, sha256-verified, blackout-safe
+#   3. plain-ANSI  — the original step/say/ok/warn/die output
+# Pinned to 2.0.2. Do not track main: Bubble Tea v1->v2 was API-breaking.
+# Never run gum under Windows Subsystem for Android (charmbracelet/gum#413).
+ensure_gum(){
+  [ "$NO_GUM" = 1 ] && { say "gum disabled (--no-gum) — plain-ANSI output"; return 0; }
+  [ -n "$GUM" ] && return 0
+  if command -v gum >/dev/null; then GUM=gum; gum_pin_check; return 0; fi
+
+  local want; want="$(sed -n '1p' "$REPO_DIR/vendor/gum/VERSION" 2>/dev/null)"
+  [ -n "$want" ] || want=2.0.2
+
+  warn "gum $want missing — auto-installing"
+  # 1. Termux package (source-built aarch64, same pin).
+  if command -v pkg >/dev/null; then
+    run pkg install -y gum
+    if command -v gum >/dev/null; then GUM=gum; gum_pin_check; return 0; fi
+  fi
+
+  # 2. Vendored binary. Verify the checksum BEFORE extracting, arm64 only.
+  local vdir="$REPO_DIR/vendor/gum" tb="gum_${want}_Linux_arm64.tar.gz"
+  if [ ! -f "$vdir/$tb" ]; then
+    warn "no gum and no vendored $tb — plain-ANSI output"; return 0
+  fi
+  if [ "$(uname -m)" != aarch64 ]; then
+    warn "vendored gum is arm64-only (host $(uname -m)) — plain-ANSI output"; return 0
+  fi
+  ( cd "$vdir" && sha256sum -c SHA256SUMS >/dev/null 2>&1 ) \
+    || die "vendored gum failed its sha256 check — see vendor/gum/SHA256SUMS"
+  local tmp="$PREFIX/tmp/.oa_gum_extract"
+  run rm -rf "$tmp"
+  run mkdir -p "$tmp"
+  run tar xzf "$vdir/$tb" -C "$tmp"
+  run mkdir -p "$OA_BIN"
+  run cp "$tmp/gum_${want}_Linux_arm64/gum" "$OA_BIN/gum"
+  run chmod 755 "$OA_BIN/gum"
+  run rm -rf "$tmp"
+  if command -v gum >/dev/null; then GUM=gum
+  elif [ -x "$OA_BIN/gum" ]; then GUM="$OA_BIN/gum"
+  else warn "gum still missing after extract — plain-ANSI output"; return 0
+  fi
+  gum_pin_check
+}
+
+# Warn (do not fail) when the available gum is not the pinned version.
+gum_pin_check(){
+  local have; have="$("$GUM" --version 2>/dev/null | sed -n 's/.*v\([0-9.]*\).*/\1/p' | head -1)"
+  local want; want="$(sed -n '1p' "$REPO_DIR/vendor/gum/VERSION" 2>/dev/null)"
+  [ -n "$want" ] || want=2.0.2
+  [ "$have" = "$want" ] || warn "gum version ${have:-?} != pinned $want (see vendor/gum/README.md)"
+}
+
 # chroot-distro is a pip package (PyPI: chroot-distro, GPL-3.0, stdlib-only).
 # Auto-install it on a fresh phone: Termux 'pkg' for python/pip, then pip.
 ensure_chroot_distro(){
@@ -62,6 +125,7 @@ Steps:
 Options:
   --dry-run  Same as plan for the chosen step.
   -y         No prompts.
+  --no-gum   Force plain-ANSI output (skip Charm gum entirely).
 USAGE
 }
 
@@ -194,7 +258,8 @@ step_verify(){
 
 # ------------------------------------------------------------------ main
 CMD="${1:-}"; shift || true
-for a in "$@"; do case "$a" in --dry-run) DRY=1;; -y|--yes) ;; esac; done
+for a in "$@"; do case "$a" in --dry-run) DRY=1;; -y|--yes) ;; --no-gum) NO_GUM=1;; esac; done
+ensure_gum
 case "$CMD" in
   check) step_check ;;
   container) step_container ;;

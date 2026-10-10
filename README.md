@@ -48,7 +48,12 @@ Steps are idempotent and individually runnable: `check`, `container`, `seed`,
 `omarchy`, `display`, `verify`.
 
 Dependencies are auto-installed: `chroot-distro` (PyPI, GPL-3.0) is fetched via
-`pip` on first run if missing. The seed step also disables pacman 7.x's
+`pip` on first run if missing. The installer's UI layer is Charm's **gum**
+(MIT, pinned 2.0.2): a system gum is used when present (`pkg install gum` on
+Termux, `pacman -S gum` inside the container — both ship 2.0.2), otherwise the
+sha256-verified binary in [`vendor/gum/`](vendor/gum/README.md) is extracted,
+and if neither is available the installer falls back to plain ANSI output
+(`--no-gum` forces that path). The seed step also disables pacman 7.x's
 Landlock/seccomp download sandbox — the 5.4 GKI kernel has no Landlock, and
 without this `pacman -Sy` fails with "restricting filesystem access failed".
 
