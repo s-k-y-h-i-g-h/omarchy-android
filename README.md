@@ -47,6 +47,11 @@ cd omarchy-android
 Steps are idempotent and individually runnable: `check`, `container`, `seed`,
 `omarchy`, `display`, `verify`.
 
+Dependencies are auto-installed: `chroot-distro` (PyPI, GPL-3.0) is fetched via
+`pip` on first run if missing. The seed step also disables pacman 7.x's
+Landlock/seccomp download sandbox — the 5.4 GKI kernel has no Landlock, and
+without this `pacman -Sy` fails with "restricting filesystem access failed".
+
 ## Kernel (the prerequisite)
 
 The stock Fold3 kernel is missing the namespace primitives Droidspaces needs.

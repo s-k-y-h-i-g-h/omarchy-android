@@ -28,8 +28,23 @@ die(){ printf '\n%sError: %s%s\n' "$RED" "$1" "$RST" >&2; exit 1; }
 
 run(){ if (( DRY )); then printf '    %s[plan]%s %s\n' "$YLW" "$RST" "${*@Q}"; else "$@"; fi; }
 
-# Run a command inside the container (root).
-in_ct(){ su -c "chroot-distro run $CONTAINER -- $*" 2>&1; }
+# chroot-distro is a pip package (PyPI: chroot-distro, GPL-3.0, stdlib-only).
+# Auto-install it on a fresh phone: Termux 'pkg' for python/pip, then pip.
+ensure_chroot_distro(){
+  command -v chroot-distro >/dev/null && return 0
+  warn "chroot-distro missing — auto-installing"
+  command -v pkg >/dev/null && run pkg install -y python pip
+  command -v pip >/dev/null || die "no pip available — install Termux 'python' package first"
+  run pip install -U chroot-distro
+  command -v chroot-distro >/dev/null || die "chroot-distro still missing after pip install"
+  ok "chroot-distro $(chroot-distro -V 2>/dev/null | head -1) installed"
+}
+
+# Run a command inside the container. chroot-distro self-elevates on Termux
+# (it invokes the root manager's su itself) — do NOT wrap it in `su -c`, which
+# strips PATH and degrades its mount logic. `login -- CMD` runs an arbitrary
+# command; `run` is for the image's entrypoint, so use login here.
+in_ct(){ chroot-distro login "$CONTAINER" -- bash -c "$*" 2>&1; }
 
 usage(){ cat <<USAGE
 Usage: ./install.sh [options] <step>
@@ -90,23 +105,28 @@ step_check(){
 # ------------------------------------------------------------- container
 step_container(){
   step "Container: $CONTAINER from $IMAGE"
-  command -v chroot-distro >/dev/null || die "chroot-distro not installed (pip install chroot-distro)"
+  ensure_chroot_distro
   if chroot-distro list 2>/dev/null | grep -qw "$CONTAINER"; then
     ok "container '$CONTAINER' exists"; return 0
   fi
-  run su -c "chroot-distro install $IMAGE --name $CONTAINER"
+  # chroot-distro self-elevates; run it directly so its PATH/mount logic is intact.
+  run chroot-distro install "$IMAGE" --name "$CONTAINER"
   ok "container created"
 }
 
 # ------------------------------------------------------------------ seed
 step_seed(){
   step "Seed container"
-  in_ct "pacman -Sy --noconfirm" >/dev/null
-  # pacman CheckSpace: chroot has no mountinfo entry for cachedir -> false ENOSPC.
+  # pacman 7.x sandboxes downloads with Landlock/seccomp; the 5.4 GKI kernel has
+  # no Landlock -> "restricting filesystem access failed". These are BARE global
+  # options in [options] (no '= true' — pacman rejects valued forms).
+  in_ct "sed -i '/^DisableSandbox/d' /etc/pacman.conf"
+  in_ct "sed -i '/^\[options\]/a DisableSandboxFilesystem\nDisableSandboxSyscalls' /etc/pacman.conf"
   in_ct "sed -i 's/^CheckSpace/#CheckSpace/' /etc/pacman.conf"
+  in_ct "pacman -Sy --noconfirm"
   # keyring (menci image strips signing keys)
-  in_ct "pacman -S --needed --noconfirm archlinuxarm-keyring" >/dev/null
-  in_ct "pacman -S --needed --noconfirm sudo bash git base-devel" >/dev/null
+  in_ct "pacman -S --needed --noconfirm archlinuxarm-keyring"
+  in_ct "pacman -S --needed --noconfirm sudo bash git base-devel"
   # user
   in_ct "id $OA_USER >/dev/null 2>&1 || useradd -m -u $OA_UID -s /bin/bash $OA_USER"
   in_ct "printf '$OA_USER ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/$OA_USER"
@@ -157,8 +177,8 @@ echo "[3] headless Hyprland (software, for streaming):"
 hyprland --i-am-really-stupid >/tmp/oa-hl.log 2>&1 & HP2=$!; sleep 8
 kill -0 $HP2 2>/dev/null && echo "    RUNNING headless" || { echo "    failed"; grep -iE "aquamarine|allocator|no backend|fail" /tmp/oa-hl.log | head -4 | sed 's/^/      /'; kill $HP2 2>/dev/null; }
 DISP
-  local rf; rf=$(su -c "chroot-distro info 2>/dev/null" | sed -n 's/^.*rootfs: //p' | head -1)
-  rf="${rf:-$PREFIX/var/lib/chroot-distro/containers/$CONTAINER/rootfs}"
+  # Storage layout on Termux: $PREFIX/var/lib/chroot-distro/containers/<name>/rootfs
+  local rf="$PREFIX/var/lib/chroot-distro/containers/$CONTAINER/rootfs"
   su -c "cp $PREFIX/tmp/oa_display.sh $rf/tmp/oa_display.sh && chmod 755 $rf/tmp/oa_display.sh" >/dev/null
   in_ct "bash /tmp/oa_display.sh"
 }
